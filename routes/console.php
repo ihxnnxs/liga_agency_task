@@ -8,4 +8,4 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::job(new SynchronizeSheet)->everyMinute();
+Schedule::job(SynchronizeSheet::class)->everyMinute();
