@@ -21,57 +21,51 @@ class SynchronizeSheet implements ShouldQueue
     private const SHEET_NAME = 'Лист1';
     private const CACHE_KEY_SHEET_ID = 'google_sheet_id';
 
-    /**
-     * Внедряем зависимости через конструктор.
-     * Laravel автоматически предоставит экземпляры этих классов.
-     */
-    public function __construct(
-        private readonly GoogleSheetService $sheetService,
-        private readonly CacheRepository $cache,
-        private readonly LoggerInterface $log
-    ) {}
+    public function __construct()
+    {
+    }
 
     /**
-     * Основной метод, оркестрирующий процесс синхронизации.
      *
-     * @throws Exception|\Psr\SimpleCache\InvalidArgumentException - перебрасывается для механизма повторных попыток Laravel
+     * @throws Exception
      */
-    public function handle(): void
-    {
-        $sheetId = $this->cache->get(self::CACHE_KEY_SHEET_ID);
+    public function handle(
+        GoogleSheetService $sheetService,
+        CacheRepository $cache,
+        LoggerInterface $log
+    ): void {
+        $sheetId = $cache->get(self::CACHE_KEY_SHEET_ID);
 
         if (!$sheetId) {
-            $this->log->warning('Задача синхронизации остановлена: ID таблицы не настроен.');
+            $log->warning('Задача синхронизации остановлена: ID таблицы не настроен.');
             return;
         }
 
-        $this->log->info("Начинаем синхронизацию с таблицей ID: {$sheetId}");
+        $log->info("Начинаем синхронизацию с таблицей ID: {$sheetId}");
 
         try {
-            $commentsMap = $this->getCommentsMap($sheetId);
-            $itemsToSync = $this->getItemsToSync();
+            $commentsMap = $this->getCommentsMap($sheetId, $log, $sheetService);
+            $itemsToSync = $this->getItemsToSync($log);
             $finalData = $this->prepareFinalData($itemsToSync, $commentsMap);
 
-            $this->sheetService->clearSheet($sheetId, self::SHEET_NAME);
-            $this->sheetService->updateSheet($sheetId, self::SHEET_NAME, $finalData);
+            $sheetService->clearSheet($sheetId, self::SHEET_NAME);
+            $sheetService->updateSheet($sheetId, self::SHEET_NAME, $finalData);
 
-            $this->log->info("Синхронизация с таблицей ID: {$sheetId} успешно завершена.");
+            $log->info("Синхронизация с таблицей ID: {$sheetId} успешно завершена.");
         } catch (Exception $e) {
-            $this->log->error("Ошибка при синхронизации с Google Sheets: " . $e->getMessage(), [
+            $log->error("Ошибка при синхронизации с Google Sheets: " . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
-            // Перебрасываем исключение, чтобы Laravel понял, что задача провалилась
             throw $e;
         }
     }
 
     /**
-     * Извлекает существующие комментарии из таблицы.
      * @throws Exception
      */
-    private function getCommentsMap(string $sheetId): array
+    private function getCommentsMap(string $sheetId, LoggerInterface $log, GoogleSheetService $sheetService): array
     {
-        $sheetData = $this->sheetService->getSheetData($sheetId, self::SHEET_NAME);
+        $sheetData = $sheetService->getSheetData($sheetId, self::SHEET_NAME);
         $commentsMap = [];
 
         if ($sheetData->isEmpty() || $sheetData->count() <= 1) {
@@ -90,23 +84,17 @@ class SynchronizeSheet implements ShouldQueue
             }
         }
 
-        $this->log->info("Найдено " . count($commentsMap) . " комментариев в таблице.");
+        $log->info("Найдено " . count($commentsMap) . " комментариев в таблице.");
         return $commentsMap;
     }
 
-    /**
-     * Получает из БД записи, которые должны быть синхронизированы.
-     */
-    private function getItemsToSync(): Collection
+    private function getItemsToSync(LoggerInterface $log): Collection
     {
         $items = Item::allowed()->orderBy('id')->get();
-        $this->log->info("Найдено {$items->count()} записей со статусом 'Allowed' для выгрузки.");
+        $log->info("Найдено {$items->count()} записей со статусом 'Allowed' для выгрузки.");
         return $items;
     }
 
-    /**
-     * Формирует итоговый массив данных для записи в таблицу.
-     */
     private function prepareFinalData(Collection $items, array $commentsMap): array
     {
         $finalHeaders = ['id', 'name', 'status', 'created_at', 'updated_at', 'comment'];
